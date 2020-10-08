@@ -116,6 +116,7 @@ FLOWS = [
     "minecraft_server",
     "mobile_app",
     "monoprice",
+    "mpd",
     "mqtt",
     "myq",
     "neato",

@@ -26,6 +26,7 @@ from homeassistant.components.media_player.const import (
     SUPPORT_VOLUME_SET,
     SUPPORT_VOLUME_STEP,
 )
+from homeassistant.config_entries import SOURCE_IMPORT
 from homeassistant.const import (
     CONF_HOST,
     CONF_NAME,
@@ -35,14 +36,14 @@ from homeassistant.const import (
     STATE_PAUSED,
     STATE_PLAYING,
 )
-import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers import config_validation as cv
 from homeassistant.util import Throttle
 import homeassistant.util.dt as dt_util
 
+from .const import DEFAULT_NAME, DEFAULT_PORT, DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
 
-DEFAULT_NAME = "MPD"
-DEFAULT_PORT = 6600
 
 PLAYLIST_UPDATE_INTERVAL = timedelta(seconds=120)
 
@@ -70,15 +71,43 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
 )
 
 
-def setup_platform(hass, config, add_entities, discovery_info=None):
-    """Set up the MPD platform."""
-    host = config.get(CONF_HOST)
-    port = config.get(CONF_PORT)
-    name = config.get(CONF_NAME)
-    password = config.get(CONF_PASSWORD)
+def find_matching_config_entries_for_host(hass, host):
+    """Search existing config entries for one matching the host."""
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if entry.data[CONF_HOST] == host:
+            return entry
+    return None
 
+
+async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
+    """Set up the MPD platform."""
+
+    host = config[CONF_HOST]
+    if find_matching_config_entries_for_host(hass, host):
+        return
+
+    entry_data = {
+        CONF_NAME: config[CONF_NAME],
+        CONF_HOST: host,
+        CONF_PORT: config[CONF_PORT],
+        CONF_PASSWORD: config.get(CONF_PASSWORD),
+    }
+    hass.async_create_task(
+        hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_IMPORT}, data=entry_data
+        )
+    )
+
+
+async def async_setup_entry(hass, config_entry, async_add_entities):
+    """Add MPD entities."""
+
+    name = config_entry.data[CONF_NAME]
+    host = config_entry.data[CONF_HOST]
+    password = config_entry.data.get(CONF_PASSWORD)
+    port = config_entry.data[CONF_PORT]
     device = MpdDevice(host, port, password, name)
-    add_entities([device], True)
+    async_add_entities([device])
 
 
 class MpdDevice(MediaPlayerEntity):
@@ -159,7 +188,12 @@ class MpdDevice(MediaPlayerEntity):
                 self._connect()
 
             self._fetch_status()
-        except (mpd.ConnectionError, OSError, BrokenPipeError, ValueError) as error:
+        except (
+            mpd.ConnectionError,
+            OSError,
+            BrokenPipeError,
+            ValueError,
+        ) as error:
             # Cleanly disconnect in case connection is not in valid state
             _LOGGER.debug("Error updating status: %s", error)
             self._disconnect()
